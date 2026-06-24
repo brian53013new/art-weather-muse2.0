@@ -454,6 +454,19 @@ export default function Home() {
         lang={lang}
         theme={theme}
       />
+
+      {/* Footer */}
+      <footer className={`fixed bottom-0 left-0 right-0 z-50 text-center py-3 px-4 text-[10px] font-sans tracking-widest uppercase transition-colors duration-500 ${theme === "light" ? "text-[#2C2C2A]/40" : "text-[#FAF9F6]/30"}`}>
+        © {new Date().getFullYear()} Brian&Code {lang === "zh" ? "團隊出品" : "Team"}. {lang === "zh" ? "更多作品請見" : "More works at"}{" "}
+        <a
+          href="https://brian53013new.github.io/Brian-Code-Official-website/"
+          target="_blank"
+          rel="noopener noreferrer"
+          className={`underline underline-offset-2 transition-colors duration-300 ${theme === "light" ? "hover:text-[#2C2C2A]/80" : "hover:text-[#FAF9F6]/70"}`}
+        >
+          {lang === "zh" ? "官方網站" : "Official Website"}
+        </a>
+      </footer>
     </main>
   );
 }
