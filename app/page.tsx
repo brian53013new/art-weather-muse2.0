@@ -49,6 +49,8 @@ const themes: [string, string, string][] = [
   ["minimal", "極簡白", "Minimal White"], ["vintage", "爵士復古", "Vintage Jazz"],
   ["future", "未來科技", "Future Tech"], ["emerald", "自然翡翠", "Emerald Nature"],
 ];
+const UPDATE_NOTICE_KEY = "artweather-update-notice:2026-10-17";
+const OFFICIAL_WEBSITE_URL = "https://brian53013new.github.io/Brian-Code-Official-website/";
 
 export default function Home() {
   const [weather, setWeather] = useState<WeatherData | null>(null);
@@ -69,10 +71,16 @@ export default function Home() {
   const [forecastOpen, setForecastOpen] = useState(false);
   const [detailItem, setDetailItem] = useState(null);
   const detailTriggerRef = useRef<HTMLElement | null>(null);
+  const updateNoticeTriggerRef = useRef<HTMLElement | null>(null);
+  const [updateNoticeOpen, setUpdateNoticeOpen] = useState(false);
   const requestId = useRef(0);
   const locatePending = useRef(false);
   const dismissToast = () => setToastOpen(false);
   const closeDetail = useCallback(() => setDetailItem(null), []);
+  const closeUpdateNotice = useCallback(() => {
+    setUpdateNoticeOpen(false);
+    try { localStorage.setItem(UPDATE_NOTICE_KEY, "seen"); } catch { /* storage unavailable */ }
+  }, []);
   const openDetail = (event, item) => {
     detailTriggerRef.current = event.currentTarget;
     setDetailItem(item);
@@ -96,6 +104,13 @@ export default function Home() {
   }, [toastOpen, toastKey]);
   useEffect(() => {
     try { const saved = localStorage.getItem("artweather-theme"); if (themes.some(([id]) => id === saved)) setVisualTheme(saved!); } catch { /* storage unavailable */ }
+  }, []);
+  useEffect(() => {
+    try {
+      if (localStorage.getItem(UPDATE_NOTICE_KEY) !== "seen") setUpdateNoticeOpen(true);
+    } catch {
+      setUpdateNoticeOpen(true);
+    }
   }, []);
   useEffect(() => {
     document.documentElement.dataset.theme = visualTheme;
@@ -446,6 +461,38 @@ export default function Home() {
       {forecastOpen && <ForecastDrawer key={selectedCity} city={weather?.city || selectedCity} lang={lang} onClose={() => setForecastOpen(false)} />}
 
       <AnimatePresence>
+        {updateNoticeOpen && (
+          <DetailDialog
+            title={lang === "zh" ? "ArtWeather Muse 更新內容" : "What’s new in ArtWeather Muse"}
+            description={lang === "zh" ? "天氣資訊與互動體驗已更新。以下是本次主要內容。" : "Weather information and interactions have been updated. Here are the highlights."}
+            onClose={closeUpdateNotice}
+            triggerRef={updateNoticeTriggerRef}
+          >
+            <div className="space-y-4">
+              <section className="theme-subcard rounded-2xl p-5">
+                <h3 className="font-serif text-lg font-semibold">{lang === "zh" ? "城市七日預報" : "Seven-day city forecast"}</h3>
+                <p className="mt-2 text-sm leading-relaxed" style={{ color: "var(--muted)" }}>{lang === "zh" ? "從各城市天氣卡開啟預報，查看未來七天的天氣、生活建議與藝術語句。" : "Open a city forecast to explore the next seven days, daily guidance, and weather-inspired writing."}</p>
+              </section>
+              <section className="theme-subcard rounded-2xl p-5">
+                <h3 className="font-serif text-lg font-semibold">{lang === "zh" ? "資訊卡片詳細內容" : "Details for weather cards"}</h3>
+                <p className="mt-2 text-sm leading-relaxed" style={{ color: "var(--muted)" }}>{lang === "zh" ? "點擊基本天氣資訊或專業數據卡，即可展開對應數值與說明。" : "Select basic weather or professional metric cards to see their values and explanations."}</p>
+              </section>
+              <section className="theme-subcard rounded-2xl p-5">
+                <h3 className="font-serif text-lg font-semibold">{lang === "zh" ? "六種網站風格" : "Six visual themes"}</h3>
+                <p className="mt-2 text-sm leading-relaxed" style={{ color: "var(--muted)" }}>{lang === "zh" ? "經典高級、深色奢華、極簡白、爵士復古、未來科技與自然翡翠，隨時切換。" : "Switch between Classic Premium, Dark Luxury, Minimal White, Vintage Jazz, Future Tech, and Emerald Nature."}</p>
+              </section>
+              <div className="border-t pt-5" style={{ borderColor: "var(--line)" }}>
+                <p className="mb-3 text-sm leading-relaxed" style={{ color: "var(--muted)" }}>{lang === "zh" ? "前往官方網站查看完整更新內容與更多作品。" : "Visit our official website for full update details and more projects."}</p>
+                <a href={OFFICIAL_WEBSITE_URL} target="_blank" rel="noopener noreferrer" onClick={closeUpdateNotice} className="theme-control inline-flex min-h-11 items-center justify-center rounded-full border px-5 py-3 text-sm font-semibold transition hover:-translate-y-0.5">
+                  {lang === "zh" ? "前往官方網站查看完整內容 ↗" : "Visit the official website ↗"}
+                </a>
+              </div>
+            </div>
+          </DetailDialog>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
         {detailItem && weather && (
           <DetailDialog title={detailItem.title} description={detailItem.description} onClose={closeDetail} triggerRef={detailTriggerRef}>
             {detailItem.kind === "basic" ? (
@@ -485,7 +532,7 @@ export default function Home() {
       <footer className={`fixed bottom-0 left-0 right-0 z-50 text-center py-3 px-4 text-[10px] font-sans tracking-widest uppercase transition-colors duration-500 ${theme === "light" ? "text-[#2C2C2A]/40" : "text-[#FAF9F6]/30"}`}>
         © {new Date().getFullYear()} Brian&Code {lang === "zh" ? "團隊出品" : "Team"}. {lang === "zh" ? "更多作品請見" : "More works at"}{" "}
         <a
-          href="https://brian53013new.github.io/Brian-Code-Official-website/"
+          href={OFFICIAL_WEBSITE_URL}
           target="_blank"
           rel="noopener noreferrer"
           className={`underline underline-offset-2 transition-colors duration-300 ${theme === "light" ? "hover:text-[#2C2C2A]/80" : "hover:text-[#FAF9F6]/70"}`}
