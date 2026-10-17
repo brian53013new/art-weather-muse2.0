@@ -49,7 +49,9 @@ const themes: [string, string, string][] = [
   ["minimal", "極簡白", "Minimal White"], ["vintage", "爵士復古", "Vintage Jazz"],
   ["future", "未來科技", "Future Tech"], ["emerald", "自然翡翠", "Emerald Nature"],
 ];
-const UPDATE_NOTICE_KEY = "artweather-update-notice:2026-10-17";
+// Bump this release-scoped key whenever the notice changes so returning visitors
+// who dismissed an earlier notice still see this release's update.
+const UPDATE_NOTICE_KEY = "artweather-update-notice:2026-10-17:v2";
 const OFFICIAL_WEBSITE_URL = "https://brian53013new.github.io/Brian-Code-Official-website/";
 
 export default function Home() {
@@ -483,7 +485,7 @@ export default function Home() {
               </section>
               <div className="border-t pt-5" style={{ borderColor: "var(--line)" }}>
                 <p className="mb-3 text-sm leading-relaxed" style={{ color: "var(--muted)" }}>{lang === "zh" ? "前往官方網站查看完整更新內容與更多作品。" : "Visit our official website for full update details and more projects."}</p>
-                <a href={OFFICIAL_WEBSITE_URL} target="_blank" rel="noopener noreferrer" onClick={closeUpdateNotice} className="theme-control inline-flex min-h-11 items-center justify-center rounded-full border px-5 py-3 text-sm font-semibold transition hover:-translate-y-0.5">
+                <a href={OFFICIAL_WEBSITE_URL} target="_blank" rel="noopener noreferrer" className="theme-control inline-flex min-h-11 items-center justify-center rounded-full border px-5 py-3 text-sm font-semibold transition hover:-translate-y-0.5">
                   {lang === "zh" ? "前往官方網站查看完整內容 ↗" : "Visit the official website ↗"}
                 </a>
               </div>
