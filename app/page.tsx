@@ -2,13 +2,15 @@
 // @ts-nocheck
 "use client";
 
-import React, { useEffect, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { MockWeatherService, WeatherData } from "@/lib/weatherService";
 import { findNearestCity } from "@/lib/geolocation";
 import Sidebar from "@/components/Sidebar";
 import WeatherVisuals from "@/components/WeatherVisuals";
 import TiltCard from "@/components/TiltCard";
+import ForecastDrawer from "@/components/ForecastDrawer";
+import DetailDialog from "@/components/DetailDialog";
 import { ArtStyle, getStyleForCondition } from "@/data/artStyles";
 
 // UI translations
@@ -42,6 +44,11 @@ const ui = {
   basicInfo: { en: "Basic Info", zh: "基本資訊" },
   proInfo: { en: "Pro Info", zh: "專業資訊" },
 };
+const themes: [string, string, string][] = [
+  ["classic", "經典高級", "Classic Premium"], ["luxury", "深色奢華", "Dark Luxury"],
+  ["minimal", "極簡白", "Minimal White"], ["vintage", "爵士復古", "Vintage Jazz"],
+  ["future", "未來科技", "Future Tech"], ["emerald", "自然翡翠", "Emerald Nature"],
+];
 
 export default function Home() {
   const [weather, setWeather] = useState<WeatherData | null>(null);
@@ -53,68 +60,92 @@ export default function Home() {
   const [theme, setTheme] = useState<"light" | "dark">("light");
   const [geoDenied, setGeoDenied] = useState(false);
   const [showDetails, setShowDetails] = useState(false);
-
-  // Auto-request geolocation on mount
+  const [visualTheme, setVisualTheme] = useState("classic");
+  const [showThemes, setShowThemes] = useState(false);
+  const [geoStatus, setGeoStatus] = useState("idle");
+  const [geoMessage, setGeoMessage] = useState("");
+  const [toastOpen, setToastOpen] = useState(false);
+  const [toastKey, setToastKey] = useState(0);
+  const [forecastOpen, setForecastOpen] = useState(false);
+  const [detailItem, setDetailItem] = useState(null);
+  const detailTriggerRef = useRef<HTMLElement | null>(null);
+  const requestId = useRef(0);
+  const locatePending = useRef(false);
+  const dismissToast = () => setToastOpen(false);
+  const closeDetail = useCallback(() => setDetailItem(null), []);
+  const openDetail = (event, item) => {
+    detailTriggerRef.current = event.currentTarget;
+    setDetailItem(item);
+  };
+  const metricCard = (label, value, unit, explanation) => (
+    <button type="button" key={label} onClick={(event) => openDetail(event, { kind: "metric", title: label, value: value ?? "—", unit, description: typeof explanation === "string" ? explanation : explanation[lang] })}
+      className="theme-subcard min-h-20 rounded-xl p-3 text-left transition hover:-translate-y-0.5 focus-visible:outline-offset-2">
+      <span className="block text-[10px] font-sans tracking-widest uppercase opacity-70">{label}</span>
+      <span className="mt-1 flex items-baseline gap-1"><span className="font-serif text-2xl">{value ?? "—"}</span>{unit && <span className="text-xs opacity-65">{unit}</span>}</span>
+      <span className="mt-2 block text-[10px] opacity-55">{lang === "zh" ? "點擊查看說明" : "Open details"}</span>
+    </button>
+  );
   useEffect(() => {
-    if (!navigator.geolocation) {
-      setGeoDenied(true);
-      return;
-    }
-    setLoading(true);
-    navigator.geolocation.getCurrentPosition(
-      (position) => {
-        const { latitude, longitude } = position.coords;
-        const result = findNearestCity(latitude, longitude);
-        console.log(`📍 Detected: ${result.city} (${result.distance}km away)`);
-        setSelectedCity(result.city);
-        setGeoDenied(false);
-      },
-      (err) => {
-        console.warn("Geolocation denied:", err.message);
-        setGeoDenied(true);
-        setSelectedCity("Taipei");
-        setLoading(false);
-      },
-      { enableHighAccuracy: true, timeout: 10000 }
-    );
+    if (!toastOpen) return;
+    const timer = window.setTimeout(() => setToastOpen(false), 3000);
+    const onKey = () => setToastOpen(false);
+    const onPointer = () => setToastOpen(false);
+    window.addEventListener("keydown", onKey);
+    window.addEventListener("pointerdown", onPointer);
+    return () => { window.clearTimeout(timer); window.removeEventListener("keydown", onKey); window.removeEventListener("pointerdown", onPointer); };
+  }, [toastOpen, toastKey]);
+  useEffect(() => {
+    try { const saved = localStorage.getItem("artweather-theme"); if (themes.some(([id]) => id === saved)) setVisualTheme(saved!); } catch { /* storage unavailable */ }
   }, []);
+  useEffect(() => {
+    document.documentElement.dataset.theme = visualTheme;
+    setTheme(["luxury", "future"].includes(visualTheme) ? "dark" : "light");
+    try { localStorage.setItem("artweather-theme", visualTheme); } catch { /* storage unavailable */ }
+  }, [visualTheme]);
 
   // Fetch weather when city changes
   useEffect(() => {
+    const id = ++requestId.current;
     setLoading(true);
-    async function fetchData() {
-      const data = await MockWeatherService.getWeather(selectedCity);
-      setWeather(data);
-      const match = getStyleForCondition(data.condition);
-      setArtStyle(match);
-      setLoading(false);
-    }
-    fetchData();
+    MockWeatherService.getWeather(selectedCity).then((data) => {
+      if (id !== requestId.current || !data || !data.condition) return;
+      setWeather(data); setArtStyle(getStyleForCondition(data.condition)); setLoading(false);
+    }).catch(() => { if (id === requestId.current) { setLoading(false); setGeoMessage("天氣資料暫時無法載入，請稍後重試。"); } });
   }, [selectedCity]);
 
-  const handleLocateMe = () => {
+  const requestLocation = (retry: boolean) => {
+    if (locatePending.current) return;
     if (!navigator.geolocation) {
       setGeoDenied(true);
+      setGeoStatus("unsupported"); setGeoMessage("瀏覽器不支援定位，請手動選擇城市。");
       return;
     }
-    setLoading(true);
+    locatePending.current = true; setGeoStatus("loading"); setGeoMessage("正在取得位置，僅用於更新當地天氣與穿搭建議…");
     navigator.geolocation.getCurrentPosition(
       (position) => {
+        locatePending.current = false;
         const { latitude, longitude } = position.coords;
+        if (!Number.isFinite(latitude) || !Number.isFinite(longitude) || Math.abs(latitude) > 90 || Math.abs(longitude) > 180) { setGeoStatus("error"); setGeoMessage("定位座標無效，請手動選擇城市。"); setGeoDenied(true); return; }
         const result = findNearestCity(latitude, longitude);
-        console.log(`📍 Detected: ${result.city} (${result.distance}km away)`);
         setSelectedCity(result.city);
-        setGeoDenied(false);
+        setGeoDenied(false); setGeoStatus("success"); setGeoMessage(`${result.city} · ${position.coords.accuracy > 10000 ? "概略位置" : `精度約 ${Math.round(position.coords.accuracy)} 公尺`}（最近城市約 ${result.distance} 公里）`); setToastOpen(true); setToastKey(x => x + 1);
       },
       (err) => {
-        console.warn("Geolocation denied:", err.message);
-        setGeoDenied(true);
-        setSelectedCity("Taipei");
-        setLoading(false);
+        locatePending.current = false; setGeoDenied(true); setGeoStatus("error");
+        if (err.code === err.PERMISSION_DENIED) setGeoMessage("定位權限未開啟。您可以在瀏覽器設定允許定位，或手動選擇城市。");
+        else if (retry && err.code === err.TIMEOUT) setTimeout(() => requestLocation(false), 900);
+        else setGeoMessage(err.code === err.POSITION_UNAVAILABLE ? "目前無法取得 GPS／網路位置，請稍後重試或手動選擇城市。" : "定位逾時，請重試或手動選擇城市。");
       },
-      { enableHighAccuracy: true, timeout: 10000 }
+      { enableHighAccuracy: true, timeout: retry ? 18000 : 12000, maximumAge: 60000 }
     );
   };
+  const handleLocateMe = () => requestLocation(true);
+
+  // Auto-request geolocation on mount
+  useEffect(() => {
+    if (!navigator.geolocation) { setGeoDenied(true); setGeoStatus("unsupported"); setGeoMessage("瀏覽器不支援定位，您仍可手動選擇城市。"); return; }
+    requestLocation(true);
+  }, []);
 
 
 
@@ -124,7 +155,7 @@ export default function Home() {
     : "bg-[#1A1A18] text-[#F5F2EB] selection:bg-[#F5F2EB]/20";
 
   return (
-    <main className={`min-h-screen ${themeClasses} transition-colors duration-500 overflow-x-hidden relative before:absolute before:inset-0 before:bg-noise before:opacity-[0.15] before:pointer-events-none before:z-0`}>
+      <main data-theme={visualTheme} className={`min-h-screen ${themeClasses} transition-colors duration-500 overflow-x-hidden relative before:absolute before:inset-0 before:bg-noise before:opacity-[0.15] before:pointer-events-none before:z-0`}>
 
       {/* Geolocation Denied Banner */}
       <AnimatePresence>
@@ -141,7 +172,7 @@ export default function Home() {
           >
             <span className="text-xl shrink-0">📍</span>
             <p className="text-xs font-sans leading-snug flex-1">
-              {ui.geoDeniedMsg[lang]}
+              {geoMessage || ui.geoDeniedMsg[lang]}
             </p>
             <button
               onClick={handleLocateMe}
@@ -149,9 +180,12 @@ export default function Home() {
             >
               {ui.geoRetry[lang]}
             </button>
+            <button onClick={() => setIsSidebarOpen(true)} className="shrink-0 text-[10px] font-bold px-3 py-2 rounded-full border theme-control">選擇城市</button>
           </motion.div>
         )}
-      </AnimatePresence>
+        </AnimatePresence>
+
+      <AnimatePresence>{(geoStatus === "loading" || (geoStatus === "success" && toastOpen)) && <motion.div initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -4 }} transition={{ duration: 0.2 }} onClick={dismissToast} className="fixed top-20 left-1/2 -translate-x-1/2 z-40 rounded-full px-4 py-2 text-xs shadow-lg border theme-status cursor-pointer" role="status">{geoStatus === "loading" ? "◌ " : "✓ "}{geoMessage}</motion.div>}</AnimatePresence>
 
       {/* Logo - Stays under Sidebar Drawer */}
       <div className="fixed top-0 left-0 p-6 md:px-12 md:py-8 z-30 pointer-events-none">
@@ -160,17 +194,8 @@ export default function Home() {
 
       {/* Navigation Buttons - Stays above Backdrop */}
       <div className="fixed top-0 right-0 p-6 md:px-12 md:py-8 flex items-center gap-3 z-[60]">
-        {/* Theme Toggle */}
-        <button
-          onClick={() => setTheme(theme === "light" ? "dark" : "light")}
-          className={`flex items-center justify-center w-8 h-8 rounded-full transition-all duration-300 shadow-sm border ${theme === "light"
-            ? "bg-white/80 border-[#2C2C2A]/10 hover:bg-[#2C2C2A] hover:text-white"
-            : "bg-black/80 border-white/10 hover:bg-white hover:text-black"
-            }`}
-          title="Toggle Theme"
-        >
-          {theme === "light" ? "🌙" : "☀️"}
-        </button>
+        <button onClick={() => setShowThemes(!showThemes)} aria-expanded={showThemes} className="theme-control text-xs font-bold px-4 py-2 rounded-full border shadow-sm">✦ 風格</button>
+        {showThemes && <div className="theme-picker" role="dialog" aria-label="選擇網站風格">{themes.map(([id, zh, en]) => <button key={id} onClick={() => { setVisualTheme(id); setShowThemes(false); }} aria-pressed={visualTheme === id}>{lang === "zh" ? zh : en}{visualTheme === id ? " ✓" : ""}</button>)}</div>}
 
         {/* Language Toggle */}
         <button
@@ -247,11 +272,15 @@ export default function Home() {
               </div>
 
               {/* Module 1: Basic Information */}
-              <motion.div 
+              <motion.button
+                type="button"
+                onClick={(event) => openDetail(event, { kind: "basic", title: ui.basicInfo[lang], description: `${lang === "zh" ? weather?.cityCn : weather?.city} · ${weather?.condition}` })}
+                aria-label={`${ui.basicInfo[lang]}，開啟詳細資訊`}
                 className={`z-10 rounded-2xl p-6 md:p-8 border backdrop-blur-md shadow-sm ${theme === "light" ? "bg-white/40 border-white/60" : "bg-black/20 border-white/10"}`}
                 initial={{ opacity: 0, y: 20 }}
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ delay: 0.3 }}
+                whileTap={{ scale: 0.995 }}
               >
                 <h3 className="text-xs font-sans font-bold tracking-[0.2em] uppercase opacity-70 mb-6 flex items-center gap-3">
                     <div className="h-px w-6 bg-museum-accent"></div>
@@ -275,7 +304,11 @@ export default function Home() {
                     <span className="font-serif text-2xl">{weather?.humidity}%</span>
                   </div>
                 </div>
-              </motion.div>
+                <span className="mt-6 block text-left text-xs font-medium opacity-65">{lang === "zh" ? "點擊查看完整天氣資訊 →" : "Open full weather details →"}</span>
+              </motion.button>
+              <button type="button" onClick={() => setForecastOpen(true)} className="theme-control z-10 self-start rounded-full border px-5 py-3 text-sm font-medium transition hover:-translate-y-0.5" aria-label={`${weather?.cityCn || selectedCity}未來七天天氣預報`}>
+                {lang === "zh" ? "查看未來 7 天天氣預報 →" : "View the next 7 days →"}
+              </button>
 
             </div>
 
@@ -372,61 +405,16 @@ export default function Home() {
                         {ui.proInfo[lang]}
                         </h4>
                         <div className={`grid grid-cols-2 md:grid-cols-3 gap-y-8 gap-x-4 p-6 rounded-2xl ${theme === "light" ? "bg-white/30" : "bg-black/20"}`}>
-                            <div>
-                                <span className="block text-[10px] font-sans tracking-widest uppercase opacity-60 mb-1">{ui.airQuality[lang]}</span>
-                                <div className="flex items-baseline gap-1">
-                                    <span className="font-serif text-2xl">{weather?.aqi}</span>
-                                    <span className="text-xs font-sans opacity-60">AQI</span>
-                                </div>
-                            </div>
-                            <div>
-                                <span className="block text-[10px] font-sans tracking-widest uppercase opacity-60 mb-1">PM 2.5</span>
-                                <div className="flex items-baseline gap-1">
-                                    <span className="font-serif text-2xl">{weather?.pm25}</span>
-                                    <span className="text-xs font-sans opacity-60">µg/m³</span>
-                                </div>
-                            </div>
-                            <div>
-                                <span className="block text-[10px] font-sans tracking-widest uppercase opacity-60 mb-1">{ui.wind[lang]}</span>
-                                <div className="flex items-baseline gap-1">
-                                    <span className="font-serif text-2xl">{weather?.windSpeed}</span>
-                                    <span className="text-xs font-sans opacity-60">km/h</span>
-                                </div>
-                            </div>
-                            <div>
-                                <span className="block text-[10px] font-sans tracking-widest uppercase opacity-60 mb-1">{ui.windDir[lang]}</span>
-                                <span className="font-serif text-2xl">{weather?.windDirection}°</span>
-                            </div>
-                            <div>
-                                <span className="block text-[10px] font-sans tracking-widest uppercase opacity-60 mb-1">{ui.pressure[lang]}</span>
-                                <div className="flex items-baseline gap-1">
-                                    <span className="font-serif text-2xl">{weather?.surfacePressure}</span>
-                                    <span className="text-xs font-sans opacity-60">hPa</span>
-                                </div>
-                            </div>
-                            <div>
-                                <span className="block text-[10px] font-sans tracking-widest uppercase opacity-60 mb-1">{ui.visibility[lang]}</span>
-                                <div className="flex items-baseline gap-1">
-                                    <span className="font-serif text-2xl">{weather?.visibility}</span>
-                                    <span className="text-xs font-sans opacity-60">km</span>
-                                </div>
-                            </div>
-                            <div>
-                                <span className="block text-[10px] font-sans tracking-widest uppercase opacity-60 mb-1">{ui.cloudCover[lang]}</span>
-                                <span className="font-serif text-2xl">{weather?.cloudCover}%</span>
-                            </div>
-                            <div>
-                                <span className="block text-[10px] font-sans tracking-widest uppercase opacity-60 mb-1">{ui.uvIndex[lang]}</span>
-                                <span className="font-serif text-2xl">{weather?.uvIndex}</span>
-                            </div>
-                            <div>
-                                <span className="block text-[10px] font-sans tracking-widest uppercase opacity-60 mb-1">{ui.sunrise[lang]}</span>
-                                <span className="font-serif text-xl">{weather?.sunrise}</span>
-                            </div>
-                            <div>
-                                <span className="block text-[10px] font-sans tracking-widest uppercase opacity-60 mb-1">{ui.sunset[lang]}</span>
-                                <span className="font-serif text-xl">{weather?.sunset}</span>
-                            </div>
+                            {metricCard(ui.airQuality[lang], weather?.aqi, "AQI", { zh: "空氣品質指數，用來概括目前空氣污染程度。", en: "The Air Quality Index summarizes the current level of air pollution." })}
+                            {metricCard("PM 2.5", weather?.pm25, "µg/m³", { zh: "細懸浮微粒濃度；數值越高，空氣中的細粒子越多。", en: "Fine-particle concentration; higher readings mean more PM2.5 in the air." })}
+                            {metricCard(ui.wind[lang], weather?.windSpeed, "km/h", { zh: "目前資料中的近地面風速。", en: "Near-surface wind speed in the current weather data." })}
+                            {metricCard(ui.windDir[lang], weather?.windDirection, "°", { zh: "風向角度以度數表示，0° 附近代表北風。", en: "Wind direction in degrees; values near 0° indicate northerly wind." })}
+                            {metricCard(ui.pressure[lang], weather?.surfacePressure, "hPa", { zh: "目前的地面氣壓資料。", en: "Current surface pressure reported by the weather data." })}
+                            {metricCard(ui.visibility[lang], weather?.visibility, "km", { zh: "目前資料估計的水平能見距離。", en: "Estimated horizontal visibility in the current reading." })}
+                            {metricCard(ui.cloudCover[lang], weather?.cloudCover, "%", { zh: "天空被雲覆蓋的比例。", en: "The estimated proportion of the sky covered by clouds." })}
+                            {metricCard(ui.uvIndex[lang], weather?.uvIndex, "", { zh: "紫外線指數；外出時可依指數採取防曬措施。", en: "UV index; use this reading to guide sun protection outdoors." })}
+                            {metricCard(ui.sunrise[lang], weather?.sunrise, "", { zh: "當地資料提供的日出時間。", en: "Local sunrise time supplied by the weather data." })}
+                            {metricCard(ui.sunset[lang], weather?.sunset, "", { zh: "當地資料提供的日落時間。", en: "Local sunset time supplied by the weather data." })}
                         </div>
                         
                         <div className={`border-t pt-8 mt-8 ${theme === "light" ? "border-museum-text/10" : "border-white/10"}`}>
@@ -449,12 +437,49 @@ export default function Home() {
       <Sidebar
         isOpen={isSidebarOpen}
         onClose={() => setIsSidebarOpen(false)}
-        onSelectCity={setSelectedCity}
+        onSelectCity={(city) => { setSelectedCity(city); setGeoDenied(false); setGeoStatus("success"); setGeoMessage(`${city} · 手動選擇`); setToastOpen(true); setToastKey(x => x + 1); }}
         selectedCity={selectedCity}
         onLocateMe={handleLocateMe}
         lang={lang}
         theme={theme}
       />
+      {forecastOpen && <ForecastDrawer key={selectedCity} city={weather?.city || selectedCity} lang={lang} onClose={() => setForecastOpen(false)} />}
+
+      <AnimatePresence>
+        {detailItem && weather && (
+          <DetailDialog title={detailItem.title} description={detailItem.description} onClose={closeDetail} triggerRef={detailTriggerRef}>
+            {detailItem.kind === "basic" ? (
+              <div className="space-y-6">
+                <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+                  {[
+                    [ui.actualTemp[lang], `${weather.temperature}°`],
+                    [ui.feelsLike[lang], `${weather.feelsLike}°`],
+                    [ui.rainChance[lang], `${weather.precipitationProbability}%`],
+                    [ui.humidity[lang], `${weather.humidity}%`],
+                  ].map(([label, value]) => <div key={label} className="theme-subcard rounded-xl p-4"><p className="text-xs opacity-70">{label}</p><p className="mt-2 font-serif text-2xl">{value}</p></div>)}
+                </div>
+                <section className="theme-subcard rounded-2xl p-5">
+                  <h3 className="font-serif text-lg font-semibold">{lang === "zh" ? "天氣摘要" : "Weather summary"}</h3>
+                  <p className="mt-2 leading-relaxed" style={{ color: "var(--muted)" }}>{lang === "zh" ? weather.descriptionCn : weather.description}</p>
+                </section>
+                <section className="theme-subcard rounded-2xl p-5">
+                  <h3 className="font-serif text-lg font-semibold">{ui.outfitGuide[lang]}</h3>
+                  <p className="mt-2 leading-relaxed" style={{ color: "var(--muted)" }}>{lang === "zh" ? weather.clothingAdviceCn : weather.clothingAdvice}</p>
+                </section>
+              </div>
+            ) : (
+              <div className="space-y-5">
+                <div className="theme-subcard rounded-2xl p-6">
+                  <p className="text-xs font-semibold uppercase tracking-[0.18em] opacity-65">{lang === "zh" ? "目前資料" : "Current reading"}</p>
+                  <p className="mt-3 font-serif text-5xl">{detailItem.value}<span className="ml-2 text-base opacity-65">{detailItem.unit}</span></p>
+                </div>
+                <p className="leading-relaxed" style={{ color: "var(--muted)" }}>{detailItem.description}</p>
+                <p className="text-xs leading-relaxed opacity-60">{lang === "zh" ? `資料城市：${weather.cityCn || weather.city}。此數值為網站目前天氣資料所提供的觀測資訊。` : `City: ${weather.city}. This value is provided by the current weather data.`}</p>
+              </div>
+            )}
+          </DetailDialog>
+        )}
+      </AnimatePresence>
 
       {/* Footer */}
       <footer className={`fixed bottom-0 left-0 right-0 z-50 text-center py-3 px-4 text-[10px] font-sans tracking-widest uppercase transition-colors duration-500 ${theme === "light" ? "text-[#2C2C2A]/40" : "text-[#FAF9F6]/30"}`}>
