@@ -49,6 +49,7 @@ export default function RootLayout({
   return (
     <html lang="zh-Hant">
       <head>
+        <script dangerouslySetInnerHTML={{ __html: `try{var t=localStorage.getItem('artweather-theme');if(['classic','luxury','minimal','vintage','future','emerald'].includes(t))document.documentElement.dataset.theme=t}catch{}` }} />
         <link rel="apple-touch-icon" href="/icons/icon-192.png" />
       </head>
       <body

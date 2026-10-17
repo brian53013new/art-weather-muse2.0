@@ -9,7 +9,22 @@ export type DailyWeather = {
     descriptionCn: string;
     clothingAdvice: string;
     clothingAdviceCn: string;
+    temperatureMean: number | null;
+    feelsLikeMean: number | null;
+    precipitationProbability: number | null;
+    precipitation: number | null;
+    humidity: number | null;
+    windSpeed: number | null;
+    windDirection: number | null;
+    uvIndex: number | null;
+    cloudCover: number | null;
+    sunrise: string | null;
+    sunset: string | null;
+    pm25Mean: number | null;
+    aqiMean: number | null;
 };
+
+export type SevenDayForecast = { city: string; cityCn: string; days: DailyWeather[]; fetchedAt: number; source: string };
 
 export type WeatherData = {
     city: string;
@@ -129,6 +144,67 @@ function getWeatherCondition(code: number, windSpeed: number): WeatherCondition 
 }
 
 export const MockWeatherService = {
+    async getSevenDayForecast(cityName: string, signal?: AbortSignal): Promise<SevenDayForecast> {
+        const coords = getCityCoords(cityName);
+        if (!coords) throw new Error("無法取得此城市座標");
+        const query = new URLSearchParams({
+            latitude: String(coords.lat), longitude: String(coords.lng), timezone: "auto", forecast_days: "8",
+            daily: "weather_code,temperature_2m_max,temperature_2m_min,temperature_2m_mean,apparent_temperature_mean,precipitation_probability_max,precipitation_sum,relative_humidity_2m_mean,wind_speed_10m_max,wind_direction_10m_dominant,uv_index_max,cloud_cover_mean,sunrise,sunset",
+        });
+        const [res, airRes] = await Promise.all([
+            fetch(`https://api.open-meteo.com/v1/forecast?${query}`, { signal, cache: "no-store" }),
+            fetch(`https://air-quality-api.open-meteo.com/v1/air-quality?${new URLSearchParams({ latitude: String(coords.lat), longitude: String(coords.lng), timezone: "auto", forecast_days: "7", hourly: "pm2_5,european_aqi" })}`, { signal, cache: "no-store" }).catch(() => null),
+        ]);
+        if (!res.ok) throw new Error(res.status === 429 ? "預報服務使用量暫時受限" : "預報服務暫時無法連線");
+        const data = await res.json();
+        const daily = data?.daily;
+        if (!Array.isArray(daily?.time) || !Array.isArray(daily?.weather_code)) throw new Error("預報資料格式異常");
+        const found = findCityData(cityName);
+        const days: DailyWeather[] = [];
+        const airByDate = new Map<string, { pm25: number[]; aqi: number[] }>();
+        if (airRes?.ok) {
+            try {
+                const air = await airRes.json();
+                const times: string[] = air?.hourly?.time ?? [];
+                for (let j = 0; j < times.length; j++) {
+                    const date = times[j]?.slice(0, 10);
+                    if (!date) continue;
+                    const bucket = airByDate.get(date) ?? { pm25: [], aqi: [] };
+                    const pm = air.hourly.pm2_5?.[j], index = air.hourly.european_aqi?.[j];
+                    if (Number.isFinite(pm)) bucket.pm25.push(pm);
+                    if (Number.isFinite(index)) bucket.aqi.push(index);
+                    airByDate.set(date, bucket);
+                }
+            } catch { /* Air-quality data is optional; weather forecast remains usable. */ }
+        }
+        for (let i = 1; i <= 7; i++) {
+            const date = daily.time[i];
+            const max = daily.temperature_2m_max?.[i];
+            const min = daily.temperature_2m_min?.[i];
+            const code = daily.weather_code?.[i];
+            if (typeof date !== "string" || !Number.isFinite(max) || !Number.isFinite(min) || !Number.isFinite(code)) continue;
+            const wind = daily.wind_speed_10m_max?.[i];
+            const condition = getWeatherCondition(code, Number.isFinite(wind) ? wind : 0);
+            const advice = getAdvancedClothingAdvice((max + min) / 2, condition);
+            const optional = (key: string) => Number.isFinite(daily[key]?.[i]) ? daily[key][i] : null;
+            const air = airByDate.get(date);
+            const mean = (values?: number[]) => values?.length ? Math.round(values.reduce((sum, value) => sum + value, 0) / values.length) : null;
+            days.push({
+                date, temperatureMax: Math.round(max), temperatureMin: Math.round(min), condition,
+                description: conditionDescriptions[condition].en, descriptionCn: conditionDescriptions[condition].cn,
+                clothingAdvice: advice.en, clothingAdviceCn: advice.cn,
+                temperatureMean: optional("temperature_2m_mean") === null ? null : Math.round(optional("temperature_2m_mean")),
+                feelsLikeMean: optional("apparent_temperature_mean") === null ? null : Math.round(optional("apparent_temperature_mean")),
+                precipitationProbability: optional("precipitation_probability_max"), precipitation: optional("precipitation_sum"),
+                humidity: optional("relative_humidity_2m_mean"), windSpeed: optional("wind_speed_10m_max"),
+                windDirection: optional("wind_direction_10m_dominant"), uvIndex: optional("uv_index_max"),
+                cloudCover: optional("cloud_cover_mean"), sunrise: daily.sunrise?.[i]?.split("T")[1] ?? null,
+                sunset: daily.sunset?.[i]?.split("T")[1] ?? null,
+                pm25Mean: mean(air?.pm25), aqiMean: mean(air?.aqi),
+            });
+        }
+        return { city: found?.city.name || cityName, cityCn: found?.city.nameCn || cityName, days, fetchedAt: Date.now(), source: "Open-Meteo" };
+    },
     async getWeather(cityName: string = "Taipei"): Promise<WeatherData> {
         const coords = getCityCoords(cityName);
         const lat = coords?.lat || 25.033;
@@ -188,7 +264,10 @@ export const MockWeatherService = {
                         description: conditionDescriptions[dCondition].en,
                         descriptionCn: conditionDescriptions[dCondition].cn,
                         clothingAdvice: dAdvice.en,
-                        clothingAdviceCn: dAdvice.cn
+                        clothingAdviceCn: dAdvice.cn,
+                        temperatureMean: null, feelsLikeMean: null, precipitationProbability: null, precipitation: null,
+                        humidity: null, windSpeed: null, windDirection: null, uvIndex: null, cloudCover: null,
+                        sunrise: null, sunset: null, pm25Mean: null, aqiMean: null,
                     });
                 }
             }
